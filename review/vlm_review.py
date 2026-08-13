@@ -37,7 +37,11 @@ Score the image on 0-100 across these dimensions:
   dramatic spotlight, cliché metaphors, over-saturated glow, plastic skin
 
 Reply with ONLY a JSON object, no markdown fences, in this exact shape:
-{"score": <int 0-100>, "opinion": "<one concise Chinese sentence explaining the main issue or why it passes>"}
+{"score": <int 0-100>,
+ "dimensions": {"composition": <int 0-100>, "lighting": <int 0-100>,
+                "style_consistency": <int 0-100>, "text_legibility": <int 0-100>,
+                "ai_flavor": <int 0-100>},
+ "opinion": "<one concise Chinese sentence explaining the main issue or why it passes>"}
 """
 
 
@@ -48,6 +52,7 @@ class ReviewResult:
     opinion: str
     image_path: str
     attempts: int = 1
+    dimensions: dict[str, float] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -124,12 +129,17 @@ class VLMReviewer:
         if r.status_code != 200:
             raise RuntimeError(f"VLM 审查返回 {r.status_code}: {r.text[:500]}")
         content = r.json()["choices"][0]["message"]["content"]
-        score, opinion = self._parse(content)
-        return ReviewResult(score=score, opinion=opinion, image_path=image_path)
+        score, opinion, dimensions = self._parse(content)
+        return ReviewResult(
+            score=score, opinion=opinion, dimensions=dimensions, image_path=image_path
+        )
 
     @staticmethod
-    def _parse(content: str) -> tuple[float, str]:
-        """从 VLM 返回文本里解析 {score, opinion}（容忍 markdown 代码块等噪声）。"""
+    def _parse(content: str) -> tuple[float, str, dict[str, float]]:
+        """从 VLM 返回文本里解析 {score, dimensions, opinion}（容忍 markdown 代码块等噪声）。
+
+        dimensions 缺失或非法时降级为空 dict，不影响 score 阈值判断（向后兼容）。
+        """
         m = re.search(r"\{.*\}", content, re.DOTALL)
         if not m:
             raise RuntimeError(f"VLM 返回无法解析: {content[:300]}")
@@ -139,7 +149,15 @@ class VLMReviewer:
             raise RuntimeError(f"VLM 返回 JSON 解析失败: {content[:300]}") from e
         score = float(data.get("score", 0))
         opinion = str(data.get("opinion", "")).strip()
-        return score, opinion
+        dimensions: dict[str, float] = {}
+        dims_raw = data.get("dimensions")
+        if isinstance(dims_raw, dict):
+            for key, value in dims_raw.items():
+                try:
+                    dimensions[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        return score, opinion, dimensions
 
     # ------------------------------------------------------------------ #
     # 审查循环：出图 → 评分 → 低分换 seed 重生成

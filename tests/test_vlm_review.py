@@ -62,3 +62,39 @@ def test_review_with_retry_returns_early_on_pass(monkeypatch):
     assert res.score == 88.0
     assert res.attempts == 2
     assert res.meta["attempt_scores"] == [60.0, 88.0]
+
+
+# --------------------------------------------------------------------------- #
+# _parse：分维度评分解析 + 向后兼容（dimensions 缺失降级空 dict）
+# --------------------------------------------------------------------------- #
+def test_parse_dimensions():
+    content = (
+        '{"score": 85, "dimensions": {"composition": 88, "lighting": 82, '
+        '"style_consistency": 90, "text_legibility": 75, "ai_flavor": 70}, '
+        '"opinion": "ok"}'
+    )
+    score, opinion, dimensions = VLMReviewer._parse(content)
+    assert score == 85.0
+    assert opinion == "ok"
+    assert dimensions == {
+        "composition": 88.0,
+        "lighting": 82.0,
+        "style_consistency": 90.0,
+        "text_legibility": 75.0,
+        "ai_flavor": 70.0,
+    }
+
+
+def test_parse_missing_dimensions_falls_back_to_empty():
+    content = '{"score": 72, "opinion": "no dims"}'
+    score, opinion, dimensions = VLMReviewer._parse(content)
+    assert score == 72.0
+    assert opinion == "no dims"
+    assert dimensions == {}
+
+
+def test_parse_tolerates_markdown_fence():
+    content = '```json\n{"score": 90, "dimensions": {"composition": 91}, "opinion": "good"}\n```'
+    score, opinion, dimensions = VLMReviewer._parse(content)
+    assert score == 90.0
+    assert dimensions == {"composition": 91.0}
