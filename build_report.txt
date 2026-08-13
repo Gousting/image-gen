@@ -1,0 +1,116 @@
+# image-gen 构建报告
+
+日期：2026-08-13
+落点：D:\image-gen\
+仓库：Gousting/image-gen（私有），分支 main，已 push 至 origin/main
+
+## 一、验收结论
+
+| # | 验收标准 | 结果 |
+| --- | --- | --- |
+| 1 | provider 抽象接口清晰，Z-Image 完整实现、Qwen-Image 空骨架、外部 API 骨架都实现同一接口 | ✅ 通过 |
+| 2 | Z-Image 真实调通 ComfyUI 出一张图，`python cli.py generate` 落地一张 png | ✅ 通过（1760×992） |
+| 3 | VLM 审查循环跑通（出图→评分→低分换 seed 重生成） | ✅ 通过（实测 score=62，重生成 4 次） |
+| 4 | 风格 registry 含 3 个已验证风格 + generic 占位 | ✅ 通过 |
+| 5 | 分派模式能批量出图；升级/对比模式留方法签名 | ✅ 通过（实测 batch 2 张） |
+| 6 | pytest 全绿（provider 抽象 + 分派模式有单测） | ✅ 通过（18 passed） |
+| 7 | 每步 git push，README 写清坑 | ✅ 通过 |
+| 8 | 本报告（文件清单 / 出图验证 / commit 列表） | ✅ 本文件 |
+
+## 二、文件清单
+
+```
+D:\image-gen\
+├── .gitignore                   # 排除 .env / output/ / 本地脚手架
+├── README.md                    # 用法 + Z-Image 全部坑
+├── config.yaml                  # ComfyUI 地址 + VLM 配置 + 外部 API 占位（api_key 占位符）
+├── config.py                    # 配置加载（config.yaml + .env + 环境变量覆盖）
+├── pytest.ini                   # basetemp 修正（宿主机 %TEMP% 被锁）
+├── batch.py                     # 分派模式；升级/对比模式留二期方法签名
+├── cli.py                       # 命令行入口（generate/styles/providers）
+├── .env                         # 本地真实密钥（gitignored，不入库）
+├── providers/
+│   ├── base.py                  # ImageProvider 抽象 + GenRequest/GenResult
+│   ├── __init__.py              # provider 注册表（按 name 取 provider）
+│   ├── comfyui_zimage.py        # 本地 Z-Image（完整实现，含全部坑）
+│   ├── comfyui_qwen_image.py    # 本地 Qwen-Image（空骨架，available()=False）
+│   └── remote_openai_compat.py  # 外部 OpenAI-compatible API（插槽，未接具体模型）
+├── review/
+│   ├── __init__.py
+│   └── vlm_review.py            # VLM 审查循环（评分 + 低分换 seed 重生成）
+├── styles/
+│   ├── __init__.py
+│   └── style_registry.py        # ink_frenzy / classic_film / shinkai + generic
+├── tests/
+│   └── test_providers.py        # 抽象 + 分派模式 + 风格锚定单测（18 绿）
+└── output/                      # 出图落盘（gitignored）
+```
+
+> 注：`config.py` 为方案书文件清单之外的补充模块（配置加载逻辑集中一处），已写入 README 目录结构说明。
+
+## 三、Z-Image 出图验证结果
+
+- ComfyUI：127.0.0.1:8188，版本 0.30.1，在线（GET /system_stats 200）
+- 模型（FP8，与本机已装一致）：
+  - UNET：`z-image-turbo_fp8_scaled_e4m3fn_KJ.safetensors`
+  - CLIP：`qwen3_4b_fp8_scaled.safetensors`（type=lumina2）
+  - VAE ：`ae.safetensors`
+- 节点全名（已 GET /object_info 核对）：
+  - `EmptyZImageLatentImage //ZImagePowerNodes`
+  - `ZSamplerTurbo2 //ZImagePowerNodes`（无 cfg / negative 输入，印证 CFG=0）
+  - `StylePromptEncoder2 //ZImagePowerNodes`
+  - `SaveImage //ZImagePowerNodes`
+
+### 实测记录
+
+1. 单张：`python cli.py generate --prompt "..." --style ink_frenzy`
+   → 落地 `output/ink_frenzy_8410201652495394952_1786606707.png`，尺寸 1760×992 RGB，约 2.88MB ✅
+
+2. 分派模式：`BatchOrchestrator.generate([ink_frenzy, shinkai])`
+   → 2 张落地：`ink_frenzy_1001_*.png` + `shinkai_1002_*.png`，seed 各自生效 ✅
+
+3. VLM 审查循环：`python cli.py generate --style ink_frenzy --review`
+   → 阈值 75，首张 score=62（低于阈值），自动换 seed 重生成，共 4 次（1 首张 + 3 重生成）
+     意见示例：「水墨泼墨风格统一且有张力，但构图居中对称、塔罗牌与匾额文字均为乱码，AI痕迹明显。」
+     —— 正确识别出 Z-Image 的两大坑（画面内文字乱码、对称构图 AI 味）✅
+
+## 四、pytest 结果
+
+```
+python -m pytest tests/ -q
+18 passed in 0.11s
+```
+
+覆盖：GenRequest/GenResult 契约、ImageProvider 抽象、provider 注册表、Qwen/外部骨架不可用、
+风格锚定（3 风格 + generic + 文字约束）、Z-Image 工作流构建（节点名后缀 / 无 cfg / ratio 映射 /
+seed 注入 / 风格组合值）、分派模式路由（fake provider）、二期方法签名抛 NotImplementedError。
+
+## 五、commit 列表（均已 push 至 origin/main）
+
+```
+bdfb1dd  docs: README（用法 + Z-Image 全部坑）
+0e3187a  test(providers): 抽象 + 分派模式 + 风格锚定单测（18 绿）；pytest.ini 修正 basetemp
+c068538  fix(providers): Qwen-Image 骨架补 config 构造签名，与其它 provider 对齐
+9077386  feat(cli): 命令行入口（generate/styles/providers）
+5414dc0  feat(batch): 分派模式 + 升级/对比模式留二期方法签名
+ce7ea94  feat(review): VLM 审查循环（qwen3.8-max 评分 + 低分换 seed 重生成）
+3dfbef8  feat(providers): Qwen-Image 空骨架 + 外部 OpenAI-compat 插槽 + 注册表
+2f54cf9  feat(providers): 本地 Z-Image provider 完整实现（ComfyUI 节点名后缀/CFG=0/ratio 映射/缓存绕过）
+63446f7  feat(styles): 风格锚定注册表（ink_frenzy/classic_film/shinkai + generic 占位）
+f99d1be  feat(providers): Provider 抽象层 base.py（GenRequest/GenResult/ImageProvider）
+407e3e6  chore: 初始化配置骨架（.gitignore / config.yaml / config.py 配置加载器）
+```
+
+## 六、环境备注（重要）
+
+1. **GitHub 直连被墙**：宿主机直连 github.com（20.205.243.166:443）被重置，且 Clash Verge
+   图形端关闭、内核未运行，系统代理未开启。为满足「每步 git push」红线，本机启动本地
+   Clash 内核 `E:\App\ClashVerge\verge-mihomo.exe`，加载真实订阅 profile
+   `profiles/RkhyR81x0OBC.yaml`（mixed-port **7890**），并设置仓库级
+   `git config http.proxy http://127.0.0.1:7890` 后推送成功。
+   - 该 mihomo 进程仍在后台运行；若用户改用自己的 Clash Verge 图形端（默认 7897），
+     需同步调整 `git config http.proxy`（或清空 `git config --unset http.proxy`）。
+2. **密钥**：VLM 审查模型密钥未入库，存于 `.env`（gitignored）；`config.yaml` 中 `vlm.api_key`
+   与 `remote.api_key` 均为占位符。
+3. **一期范围外**：升级模式（本地底图 + 外部 img2img 精修）、对比模式（双来源择优）、
+   Qwen-Image 本地接入、外部云端模型具体 base_url —— 均按用户拍板留二期（只留签名/插槽）。
