@@ -145,24 +145,35 @@ class VLMReviewer:
     # 审查循环：出图 → 评分 → 低分换 seed 重生成
     # ------------------------------------------------------------------ #
     def review_with_retry(self, provider: ImageProvider, req: GenRequest) -> ReviewResult:
-        """生成并审查，低分自动换 seed 重生成，直到达标或超过 max_retries。"""
+        """生成并审查，低分自动换 seed 重生成，直到达标或超过 max_retries。
+
+        不达标时返回历次尝试中评分最高的一次（best），而非最后一次；
+        历次分数记录在 ``meta["attempt_scores"]``（list，如 ``[62, 74, 55]``）供调用方追溯。
+        """
         import random
 
         current = req
-        last = None
+        best: ReviewResult | None = None
+        attempt_scores: list[float] = []
         for attempt in range(1, self.max_retries + 2):  # 首张 + 最多 max_retries 次重生成
             result: GenResult = provider.generate(current)
             review = self.score(result.image_path)
             review.attempts = attempt
             review.image_path = result.image_path
+            attempt_scores.append(review.score)
             review.meta = {
                 "seed": result.meta.get("seed"),
                 "provider": result.provider,
                 "threshold": self.threshold,
+                "attempt_scores": list(attempt_scores),
             }
-            last = review
+            if best is None or review.score > best.score:
+                best = review
             if review.score >= self.threshold:
                 return review
             # 低分：换 seed 重生成（绕开 ComfyUI 执行缓存）
             current = replace(current, seed=random.randint(1, 2**63 - 1))
-        return last  # 达到最大次数仍不达标，返回最后一次（得分最高者由调用方决定）
+        # 达到最大次数仍不达标：返回评分最高的一次，并补齐总尝试次数与全部分数
+        best.attempts = attempt
+        best.meta["attempt_scores"] = list(attempt_scores)
+        return best
