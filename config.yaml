@@ -1,0 +1,39 @@
+# image-gen 统一生图服务配置
+#
+# 安全约定：api_key 一律用占位符入库，真实值放项目根目录 `.env`
+# （.env 已被 .gitignore 排除，永不提交）。
+# .env 里用大写环境变量名覆盖，例如：
+#   IMAGE_GEN_VLM_API_KEY=sk-xxxx
+#   IMAGE_GEN_REMOTE_API_KEY=sk-yyyy
+
+comfyui:
+  url: "http://127.0.0.1:8188"   # 本地 ComfyUI 地址
+  timeout: 600                    # 单张出图最长等待（秒），首次加载模型较慢
+
+# 本地 Z-Image 模型文件（FP8 版本，与本机 ComfyUI 已装模型一致）
+zimage:
+  unet_name: "z-image-turbo_fp8_scaled_e4m3fn_KJ.safetensors"  # models/diffusion_models/
+  clip_name: "qwen3_4b_fp8_scaled.safetensors"                  # models/text_encoders/
+  clip_type: "lumina2"
+  vae_name: "ae.safetensors"                                    # models/vae/
+  steps: 8
+  default_size: "medium (recommended)"   # small / medium (recommended) / large
+
+# VLM 视觉审查（出图 → 评分 → 低分换 seed 重生成）
+vlm:
+  base_url: "https://opencode.ai/zen/go/v1"
+  api_key: "YOUR_VLM_API_KEY"     # 占位符，真实值放 .env: IMAGE_GEN_VLM_API_KEY
+  model: "qwen3.8-max"
+  score_threshold: 75             # 低于此分触发重生成
+  max_retries: 3                  # 最多重生成次数（不含首张）
+
+# 外部 OpenAI-compatible 生图 API 插槽（二期填具体云端模型，见 README）
+remote:
+  base_url: "https://example.com/v1"  # 占位符，二期填真实地址
+  api_key: "YOUR_REMOTE_API_KEY"      # 占位符，真实值放 .env: IMAGE_GEN_REMOTE_API_KEY
+  model: ""                           # 二期填具体云端模型名
+
+output:
+  dir: "output"                   # 出图落盘目录（相对项目根）
+  jpeg_max_side: 1024             # VLM 送审前图片最长边缩放
+  jpeg_quality: 80                # VLM 送审 JPEG 压缩质量（目标 ~80KB）

@@ -1,0 +1,21 @@
+# ---- 密钥（永不入库）----
+.env
+
+# ---- 生成产物 ----
+output/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- 测试 / 工具缓存 ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 本地运行脚手架（opencode 宿主脚本，非项目代码）----
+start_image_gen.bat
+image_gen_run.log
