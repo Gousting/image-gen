@@ -22,3 +22,5 @@ start_image_gen.bat
 image_gen_run.log
 start_fix.bat
 fix_run.log
+start_test.bat
+test_verify_run.log
