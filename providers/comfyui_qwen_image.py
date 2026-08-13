@@ -17,6 +17,10 @@ class ComfyUIQwenImageProvider(ImageProvider):
     name = "qwen_image"
     is_remote = False
 
+    def __init__(self, config: dict | None = None):
+        # 骨架占位：接受 config 以保持与其他 provider 构造签名一致，暂不使用。
+        self._config = config
+
     def generate(self, req: GenRequest) -> GenResult:
         raise NotImplementedError(
             "Qwen-Image 本地接入留二期（本类为骨架占位，available() 恒为 False）"
