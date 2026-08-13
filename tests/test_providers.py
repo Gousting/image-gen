@@ -101,6 +101,17 @@ def test_remote_skeleton_unavailable(tmp_path):
     assert p.available() is False  # 未配置真实云端模型
 
 
+def test_remote_available_when_configured(tmp_path):
+    cfg = _fake_config(tmp_path)
+    cfg["remote"] = {
+        "base_url": "https://real.example.com/v1",
+        "api_key": "sk-real-key-123",
+        "model": "flux-pro",
+    }
+    p = get_provider("remote", cfg)
+    assert p.available() is True  # base_url/api_key/model 三者齐备且非占位符
+
+
 # --------------------------------------------------------------------------- #
 # 风格锚定
 # --------------------------------------------------------------------------- #

@@ -20,3 +20,5 @@ venv/
 # ---- 本地运行脚手架（opencode 宿主脚本，非项目代码）----
 start_image_gen.bat
 image_gen_run.log
+start_fix.bat
+fix_run.log

@@ -6,8 +6,8 @@
 配置驱动：``base_url`` / ``api_key`` / ``model`` 全部从 config.yaml 读，
 换云端模型只改配置不写码。api_key 用占位符入库，真实值放 .env（不入库）。
 
-当前状态：``available()`` 返回 False —— 因为尚未配置真实云端模型。
-二期填上 base_url/api_key/model 后，本类的 generate 即可直接调用，无需改代码。
+当前状态：``available()`` 返回 ``self._configured()`` —— base_url / api_key / model
+三者齐备且非占位符即视为可用；二期接入真实云端模型后可在此加 GET /models 在线探测。
 未来遇到非 OpenAI 协议的模型（Ideogram、Gemini 等），再新增 adapter 类，
 同样实现 ``ImageProvider`` 接口即可。
 """
@@ -44,9 +44,9 @@ class RemoteOpenAICompatProvider(ImageProvider):
         )
 
     def available(self) -> bool:
-        # 骨架插槽：未配置真实云端模型，恒为 False。
-        # 二期填好 base_url/api_key/model 后，这里可改为 GET /models 探测。
-        return False
+        # 配置齐备（base_url / api_key / model 三者均非占位符）即视为可用；
+        # 二期接入真实云端模型后可在此加 GET /models 在线探测。
+        return self._configured()
 
     def generate(self, req: GenRequest) -> GenResult:
         if not self._configured():
