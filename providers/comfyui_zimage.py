@@ -169,7 +169,7 @@ class ComfyUIZImageProvider(ImageProvider):
                 "inputs": {
                     "landscape": landscape,
                     "ratio": ratio,
-                    "size": self.default_size,
+                    "size": req.size or self.default_size,
                     "batch_size": 1,
                 },
                 "class_type": _N_EMPTY,

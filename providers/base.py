@@ -24,8 +24,11 @@ class GenRequest:
                   必须转成正向描述（例：「不要亮色」→「strictly monochrome dark sepia」）。
         style:    风格锚定名，如 "ink_frenzy" / "classic_film" / "shinkai"。
                   一套图传同一个 style 名即可保证跨图风格一致。
-        width:    目标宽度（Z-Image 会就近映射到其 ratio/size 档位）。
+        width:    目标宽度（Z-Image 会就近映射到其 ratio 档位）。
         height:   目标高度。
+        size:     Z-Image 尺寸档位（small / medium (recommended) / large，取值来自
+                  object_info 的 EmptyZImageLatentImage.size 档位）；None = 用 config
+                  默认（zimage.default_size）。其它 provider 忽略。
         seed:     随机种子；None 表示由 provider 自动生成。
         negative: 负向提示词，仅供支持 negative 的模型使用；Z-Image 会直接忽略。
         provider: 可选，指定由哪个 provider 出图（分派模式用）；None 走默认 provider。
@@ -34,6 +37,7 @@ class GenRequest:
     style: str = "generic"
     width: int = 1344
     height: int = 768
+    size: str | None = None
     seed: int | None = None
     negative: str | None = None
     provider: str | None = None

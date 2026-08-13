@@ -47,6 +47,7 @@ def test_genrequest_defaults():
     assert req.style == "generic"
     assert req.width == 1344
     assert req.height == 768
+    assert req.size is None
     assert req.seed is None
     assert req.negative is None
     assert req.provider is None
@@ -173,6 +174,16 @@ def test_ratio_mapping():
     assert _ratio_and_orientation(1344, 768) == (True, "16:9  (widescreen)")
     assert _ratio_and_orientation(768, 1344) == (False, "16:9  (widescreen)")
     assert _ratio_and_orientation(1024, 1024) == (True, "1:1  (square)")
+
+
+def test_zimage_size_override(tmp_path):
+    wf = _build(tmp_path, size="large")
+    assert wf["32"]["inputs"]["size"] == "large"
+
+
+def test_zimage_size_default_fallback(tmp_path):
+    wf = _build(tmp_path)  # size=None → 回退 config 默认
+    assert wf["32"]["inputs"]["size"] == "medium (recommended)"
 
 
 # --------------------------------------------------------------------------- #

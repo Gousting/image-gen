@@ -17,7 +17,10 @@ zimage:
   clip_type: "lumina2"
   vae_name: "ae.safetensors"                                    # models/vae/
   steps: 8
-  default_size: "medium (recommended)"   # small / medium (recommended) / large
+  # Z-Image 尺寸档位（EmptyZImageLatentImage 的 size 参数，object_info 实际返回）：
+  #   small / medium (recommended) / large
+  # GenRequest.size 可覆盖此默认值；size=None 时回退到此默认。
+  default_size: "medium (recommended)"
 
 # VLM 视觉审查（出图 → 评分 → 低分换 seed 重生成）
 vlm:
