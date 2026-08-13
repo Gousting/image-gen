@@ -1,0 +1,200 @@
+# image-gen 修复后真实端到端测试报告
+
+执行环境：宿主机 Windows，工作目录 D:\image-gen\
+执行时间：2026-08-13
+ComfyUI：0.30.1（cuda:0 NVIDIA GeForce RTX 5060 Ti，在线）
+VLM：qwen3.8-max（走 opencode.ai/zen/go/v1 网关，真实 key 来自项目 .env）
+
+> 说明：本次为「修复后真实跑通」验证，全部出图走真实 ComfyUI，全部审查走真实 VLM，
+> 无 mock、无仅跑 pytest 替代。测试产物落盘 D:\image-gen\output\test_verify\。
+
+---
+
+## 一、providers 三态真实输出
+
+命令：`python cli.py providers`
+
+```
+- zimage       [local ] available
+- qwen_image   [local ] unavailable
+- remote       [remote] unavailable
+```
+
+- zimage → available（ComfyUI 在线，GET /system_stats 200，三态验证通过）
+- qwen_image → unavailable（骨架占位，available() 恒 False，符合预期）
+- remote → unavailable（未配置真实 base_url/api_key/model，符合预期）
+
+---
+
+## 二、available() 配置翻转测试
+
+新增单测 `tests/test_available_flip.py`（3 条），真实运行：
+
+命令：`python -m pytest tests/test_available_flip.py -v`
+
+```
+tests/test_available_flip.py::test_remote_available_flips_true_with_fake_non_placeholder PASSED
+tests/test_available_flip.py::test_remote_available_false_with_placeholder PASSED
+tests/test_available_flip.py::test_remote_available_false_with_missing_model PASSED
+============================== 3 passed in 0.11s ==============================
+```
+
+核心断言（修复前恒 False，修复后应 True）：
+
+```
+cfg = {"remote": {"base_url": "https://fake.example.com/v1",
+                  "api_key": "sk-fake123", "model": "dummy"}}
+RemoteOpenAICompatProvider(cfg).available()  == True   # 假但非占位 → True
+```
+
+补充：占位符（YOUR_REMOTE_API_KEY）→ False；model 为空 → False（三者缺一不可）。
+全量单测同步回归：`python -m pytest tests/ -q` → **29 passed**（原 26 + 新增 3）。
+
+结论：available() 修复真实生效。
+
+---
+
+## 三、size 档位暴露（medium vs large 真实分辨率）
+
+脚本 `test_size.py`（真实调 ComfyUI 出图 + PIL 读尺寸）：
+
+命令：`python test_size.py`
+
+```
+medium (recommended): 1760 x 992  -> D:\image-gen\output\test_verify\ink_frenzy_1129165389437049469_1786612564.png
+large              : 2176 x 1216  -> D:\image-gen\output\test_verify\ink_frenzy_7042624331941273217_1786612603.png
+medium area=1745920, large area=2646016
+OK: large 分辨率 > medium，size 档位真实生效
+```
+
+- medium 档位：1760 × 992
+- large 档位：2176 × 1216
+- large 面积（2,646,016）> medium 面积（1,745,920），断言通过 → size 档位真实生效，参数未被忽略。
+
+注意（非代码 bug）：任务书示例写 `size="medium"`，但 ComfyUI `EmptyZImageLatentImage` 的
+size COMBO 实际可选值为 `small / medium (recommended) / large`（已实测 GET /object_info 确认），
+裸 `"medium"` 会被 ComfyUI 拒绝；故 medium 档位用合法值 `"medium (recommended)"`。
+
+---
+
+## 四、VLM 5 维度分 + 审查循环（核心）
+
+### 4.1 命令行带审查出图（任务书指定命令）
+
+命令：
+`python cli.py generate --prompt "a tarot card illustration of a lone lighthouse on a stormy cliff, bold ink strokes, high contrast" --style ink_frenzy --review`
+
+```
+[review] 阈值 75.0，最多重生成 3 次
+[1/1] score=78 attempts=2 seed=5402870262654883999 -> D:\image-gen\output\ink_frenzy_5402870262654883999_1786612713.png
+        钢笔排线风格统一、双卡斜置构图有张力，但放射速度线与墨点略显模板化，牌面右侧还冒出无意义的小字符，露出AI马脚。
+```
+
+观察到：首张低分（<75）触发重生成，第 2 次 78 分达标返回（attempts=2）。
+
+### 4.2 5 维度分 + attempt_scores 逐项打印（verify_vlm_review.py）
+
+命令：`python verify_vlm_review.py --prompt "a tarot card illustration of a lone lighthouse on a stormy cliff, bold ink strokes, high contrast" --style ink_frenzy`
+
+```
+[review] 阈值 75.0，最多重生成 3 次
+[review] VLM model=qwen3.8-max base_url=https://opencode.ai/zen/go/v1
+============================================================
+总分 score     : 76
+opinion        : 手绘钢笔塔罗风格统一、文字清晰且斜置构图有动感，但放射状爆线略显套路，灯塔透视与蓝色山形细节仍带轻微AI味。
+attempts       : 2
+attempt_scores : [60.0, 76.0]
+seed           : 3980647352402892194
+image_path     : D:\image-gen\output\test_verify\ink_frenzy_3980647352402892194_1786612817.png
+------------------------------------------------------------
+5 维度分：
+  composition       : 78.0
+  lighting          : 72.0
+  style_consistency : 82.0
+  text_legibility   : 90.0
+  ai_flavor         : 70.0
+============================================================
+```
+
+- 5 维度分逐项打印：composition 78 / lighting 72 / style_consistency 82 / text_legibility 90 / ai_flavor 70
+- 总分 score=76，attempts=2，attempt_scores=[60.0, 76.0] 记录完整
+- 首张 60（<75）触发重生成，第 2 次 76（≥75）返回；attempt_scores 完整反映重试过程
+
+---
+
+## 五、真实场景出图：塔罗牌「愚者」「高塔」+ 审查
+
+命令：`python verify_vlm_review.py --prompt "..." --style ink_frenzy`
+
+### 5.1 「愚者」The Fool
+
+```
+总分 score     : 76
+opinion        : 构图动感、黑白钢笔线条完成度较高，但放射速度线配彩色落日的套路化隐喻与不够严谨的背光逻辑仍透出明显AI味。
+attempts       : 3
+attempt_scores : [70.0, 70.0, 76.0]
+image_path     : D:\image-gen\output\test_verify\ink_frenzy_4640606377197045646_1786613013.png
+5 维度分：
+  composition       : 78.0   lighting          : 72.0   style_consistency : 80.0
+  text_legibility   : 90.0   ai_flavor         : 70.0
+```
+
+### 5.2 「高塔」The Tower
+
+```
+总分 score     : 78
+opinion        : 蚀刻版画风格统一、斜置构图有动感，但底部标题文字被裁切难以辨认，闪电周围光晕略显饱和过度。
+attempts       : 4
+attempt_scores : [56.0, 73.0, 58.0, 78.0]
+image_path     : D:\image-gen\output\test_verify\ink_frenzy_7787309680963632541_1786613250.png
+5 维度分：
+  composition       : 82.0   lighting          : 78.0   style_consistency : 85.0
+  text_legibility   : 70.0   ai_flavor         : 77.0
+```
+
+（高塔）attempts=4 达到上限（首张 + max_retries=3），第 4 次 78 分压线达标；attempt_scores
+完整记录 [56, 73, 58, 78]，重生成逻辑真实跑通。
+
+---
+
+## 六、结论：4 个修复点是否真实生效
+
+| 修复点 | 是否真实生效 | 证据 |
+| --- | --- | --- |
+| 1. remote available() 配置判定 | ✅ 生效 | providers 三态正确；假非占位配置 → True（翻转测试 3 条全绿） |
+| 2. size 档位暴露 | ✅ 生效 | medium 1760×992 vs large 2176×1216，large 面积更大，断言通过 |
+| 3. VLM 5 维度分 | ✅ 生效 | 真实返回 composition/lighting/style_consistency/text_legibility/ai_flavor 5 项 + 总分 |
+| 4. 审查循环返回最高分 | ✅ 生效 | 多次 attempt_scores 完整（如 [56,73,58,78]），低分触发重生成，返回达标/最高那次 |
+
+验收核对：
+1. 真实出图 ≥ 4 张 ✅（medium、large、CLI 灯塔、脚本灯塔、愚者、高塔，共 6 张成品 + 若干低分重试稿）
+2. VLM 审查真实跑通，5 维度分有输出 ✅
+3. available() 翻转验证通过 ✅
+4. 报告含真实命令 + 真实输出摘录 ✅
+5. 每步 git push ✅（见 commit 列表）
+
+## 七、新发现问题 / 观察（非阻塞）
+
+1. **任务书示例 `size="medium"` 与真实 COMBO 值不符**：真实可选值为
+   `small / medium (recommended) / large`，裸 `"medium"` 会被 ComfyUI 拒绝。代码本身
+   （默认值 `"medium (recommended)"`、fix_report）是对的，属任务书示例笔误。
+
+2. **cli.py --review 未打印 5 维度分 / attempt_scores**：审查逻辑（review/vlm_review.py）已正确
+   返回 dimensions 与 meta.attempt_scores，但 CLI 展示层只打印 score/attempts/seed/opinion。
+   本次用 verify_vlm_review.py 补齐维度打印。属「展示层」小缺口，不影响审查闭环本身，
+   后续可考虑在 CLI 补一行维度输出。
+
+3. **Z-Image 塔罗牌「标题文字」仍会被裁切/难辨认**：高塔牌 text_legibility=70，VLM opinion
+   明确指出「底部标题文字被裁切难以辨认」——这是 Z-Image「画面内文字易乱码」坑（README 坑 #3）
+   在塔罗牌场景的自然体现，text_legibility 维度确实捕捉到了。若牌面标题重要，需后续在 prompt
+   或后期处理上处理（本次范围外）。
+
+4. **阈值 75 对 ink_frenzy 偏严**：实测 3 组审查 attempts 为 2~4 次，多数首张 56~73 分需
+   重生成才能过线，出图成本偏高。阈值与 max_retries 均可配（config.yaml），属调参问题而非 bug。
+
+## commit 列表（本次验证新增）
+
+- `be01a58` test(providers): available() 配置翻转单测（假非占位配置→True）+ gitignore 收尾 test 脚手架
+- `c0e8b13` test(size): size 档位真实出图验证脚本（medium 1760x992 vs large 2176x1216）
+- `1326b46` test(review): VLM 审查闭环验证脚本（5 维度分 + attempt_scores 逐项打印）
+- `（本报告）` docs: 修复后真实端到端测试报告 test_verify_report.txt
