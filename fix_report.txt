@@ -1,0 +1,110 @@
+# image-gen 修复报告
+
+本次只修 2 个 bug + 2 个设计完善，不重构、不新增 provider、不实现并发/批处理优化。
+
+## 结论总览
+- 全量 pytest：**26 passed**（原 18 个 + 新增 8 个），全绿。
+- 四个任务全部完成，且每完成一个子任务即 git add -A && commit && push（见末尾 commit 列表）。
+
+---
+
+## 任务一：修 bug —— 外部 provider 的 available() 恒 False（会阻碍二期）
+
+### 改动点
+- `providers/remote_openai_compat.py`
+  - `available()` 由 `return False` 改为 `return self._configured()`。
+  - 同步更新模块 docstring 与 `available()` 注释，删掉「恒为 False」「骨架插槽」等过时描述，
+    改为「配置齐备即视为可用；二期接入真实模型后可在此加 GET /models 在线探测」。
+- `tests/test_providers.py` 新增 `test_remote_available_when_configured`：
+  配置真实 base_url / api_key / model（三者均非占位符）时 `available()==True`；
+  未配置场景由原有 `test_remote_skeleton_unavailable` 覆盖（`==False`）。
+
+### 测试结果
+pytest 全绿（19 passed）。
+
+---
+
+## 任务二：修 bug —— 审查循环不达标时返回「最后一次」而非「最高分」
+
+### 改动点
+- `review/vlm_review.py` 的 `review_with_retry`：
+  - 循环内跟踪 `best`（当前最高分的 ReviewResult），每次生成后若 `review.score > best.score` 则更新。
+  - 达标（>= threshold）立即返回；循环结束返回 `best`（最高分那次），不再返回 `last`。
+  - `meta` 新增 `"attempt_scores"`（list，记录每次尝试分数，如 `[62, 74, 55]`）。
+  - 返回 `best` 时补齐总尝试次数 `attempts` 与完整的 `attempt_scores`。
+  - 修正函数 docstring 与末尾注释，去掉「返回最后一次（得分最高者由调用方决定）」自相矛盾描述。
+- `tests/test_vlm_review.py`（新建）：
+  - `test_review_with_retry_returns_best`：mock 连续返回 74、55，断言返回 74 分那次、
+    `meta.attempt_scores == [74.0, 55.0]`、`attempts == 2`。
+  - `test_review_with_retry_returns_early_on_pass`：60、88，第二次达标立即返回（回归保护）。
+
+### 测试结果
+pytest 全绿（21 passed）。
+
+---
+
+## 任务三：设计完善 —— VLM 审查返回分维度评分（支持针对性重生成）
+
+### 改动点
+- `review/vlm_review.py`：
+  - `_SCORE_PROMPT` 返回格式改为 `{score, dimensions{...5 维...}, opinion}`。
+  - `ReviewResult` 新增 `dimensions: dict[str, float] = field(default_factory=dict)`。
+  - `score()` 用 `_parse` 解析出的 dimensions 填充 `ReviewResult.dimensions`。
+  - `_parse` 返回 `(score, opinion, dimensions)`；dimensions 缺失/非法时降级为空 dict，
+    不影响 score 阈值判断（向后兼容）。
+- `tests/test_vlm_review.py` 新增：
+  - `test_parse_dimensions`：5 维解析正确。
+  - `test_parse_missing_dimensions_falls_back_to_empty`：返回体缺 dimensions 正常解析为空 dict。
+  - `test_parse_tolerates_markdown_fence`：容忍 markdown 代码块包裹。
+
+### 测试结果
+pytest 全绿（24 passed）。
+
+---
+
+## 任务四：设计完善 —— 暴露 Z-Image size 档位（支持更高分辨率出图）
+
+### 改动点
+- `providers/base.py`：`GenRequest` 新增 `size: str | None = None`，docstring 说明取值来自
+  object_info 的 size 档位。
+- `providers/comfyui_zimage.py` 的 `_build_workflow`：size 用 `req.size or self.default_size`，
+  替换写死的 `self.default_size`；config.yaml 的 `zimage.size` 仍作默认回退。
+- `config.yaml`：zimage 段加注释说明 size 档位可选值（以 object_info 实际返回为准）。
+- `tests/test_providers.py` 新增：
+  - `test_zimage_size_override`：`size="large"` → workflow 里 EmptyZImageLatentImage 的 `size == "large"`。
+  - `test_zimage_size_default_fallback`：`size=None` → 回退 config 默认 `"medium (recommended)"`。
+  - `test_genrequest_defaults` 补充断言 `size` 默认 `None`。
+
+### object_info 实际返回的 size 档位
+`GET http://127.0.0.1:8188/object_info` 中节点 `EmptyZImageLatentImage //ZImagePowerNodes`
+的 `size` 输入（COMBO，default `"medium (recommended)"`）实际可选值：
+
+- `"small"`
+- `"medium (recommended)"`
+- `"large"`
+
+（与任务书预期一致，无其它档位。）
+
+### 测试结果
+pytest 全绿（26 passed）。
+
+---
+
+## 验收
+1. pytest 全量 26 passed、全绿（原 18 + 新增 8）。
+2. 四个任务全部完成并逐次 git push。
+3. 本报告覆盖：每项改动点、测试结果、object_info 的 size 档位实际值、未做项说明。
+
+## 未做项（明确留二期，不写进已实现清单）
+- **并发/批处理优化**：16GB 显卡并发出图有 OOM 风险，本版明确不做（红线 #5）。
+- **远程 provider 的 GET /models 在线探测**：`available()` 当前仅判配置齐备，真实模型
+  接入后再补在线探测（任务一注释已预留钩子）。
+- **对比模式 / 升级模式 / Qwen-Image 本地接入**：维持二期方法签名占位，本次不动。
+- **.gitignore 收尾**：任务一提交中顺带将 opencode 宿主脚手架 `start_fix.bat` / `fix_run.log`
+  加入忽略，避免 `git add -A` 误提交本地运行日志（沿用既有 ignore 约定）。
+
+## commit 列表
+- `c8eddd9` fix(providers): remote available() 改为按配置判定（原恒 False 会阻碍二期）
+- `c40d0c2` fix(review): 审查循环不达标返回最高分（best）+ meta.attempt_scores 记录历次分数
+- `384af16` feat(review): VLM 返回分维度评分（ReviewResult.dimensions + _parse 容错降级）
+- `033d080` feat(providers): 暴露 Z-Image size 档位（GenRequest.size 覆盖 config 默认）
